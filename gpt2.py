@@ -1,4 +1,5 @@
 import tiktoken
+import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
@@ -200,4 +201,129 @@ def generate_text_simple(model, idx, max_new_tokens, context_size):
         # 将计算出的下一字符索引添加到索引数组，idx形状变为(batch, n_toekns+1)
         idx = torch.cat((idx, idx_next), dim=1)
     return idx
+
+
+# 用于文本到词元ID转换的工具函数
+def text_to_token_ids(text, tokenizer):
+    encoded = tokenizer.encode(text, allowed_special={'<|endoftext|>'})
+    encoded_tensor = torch.tensor(encoded).unsqueeze(0)
+    return encoded_tensor
+
+def token_ids_to_text(token_ids, tokenizer):
+    flat = token_ids.squeeze(0)
+    return tokenizer.decode(flat.tolist())
+
+
+# 结合温度缩放和Top-k采样修改文本生成函数
+def generate(model, idx, max_new_tokens, context_size,
+             temperature=0.0, top_k=None, eos_id=None):
+    # for循环与之前一样，获取logits，并且只关注最后一个时间步
+    for _ in range(max_new_tokens):
+        idx_cond = idx[:, -context_size:]
+        with torch.no_grad():
+            logits = model(idx_cond)
+        logits = logits[:, -1, :]
+        # 使用Top-k采样筛选logits
+        if top_k is not None:
+            top_logits, _ = torch.topk(logits, top_k)
+            min_val = top_logits[:, -1]
+            logits = torch.where(
+                logits<min_val,
+                torch.tensor(float('-inf')).to(logits.device),
+                logits
+            )
+        if temperature > 0.0:
+            # 使用温度缩放
+            logits = logits / temperature
+            probs = torch.softmax(logits, dim=-1)
+            idx_next = torch.multinomial(probs, num_samples=1)
+        else:
+            # 当禁用温度缩放时，执行贪心解码选取下一个词元
+            idx_next = torch.argmax(logits, dim=-1, keepdim=True)
+        # 如果遇到序列结束词元，则提前停止生成
+        if idx_next == eos_id:
+            break
+        idx = torch.cat((idx, idx_next), dim=1)
+    return idx
+
+
+# 定义函数检查两个张量是否具备相同的维度
+def assign(left, right):
+    if left.shape != right.shape:
+        raise ValueError(f"Shape mismatch. Left: {left.shape}, "
+                          "Right: {right.shape}"
+        )
+    return torch.nn.Parameter(torch.tensor(right))
+
+
+# 定义函数将params字典中的权重加载到GPTModel实例中
+def load_weights_into_gpt(gpt, params):
+    # 将模型的位置信息和词元嵌入权重设置为params中指定的值
+    gpt.pos_emb.weight = assign(gpt.pos_emb.weight, params['wpe'])
+    gpt.tok_emb.weight = assign(gpt.tok_emb.weight, params['wte'])
+    # 遍历模型中的每一个Transformer块
+    for b in range(len(params["blocks"])):
+        # np.split函数用于将注意力和偏置权重平均分为3个部分，分别用于查询组件、键组件和值组件
+        q_w, k_w, v_w = np.split(
+            (params["blocks"][b]["attn"]["c_attn"])["w"], 3, axis=-1
+        )
+        gpt.trf_blocks[b].att.W_query.weight = assign(gpt.trf_blocks[b].att.W_query.weight, q_w.T)
+        gpt.trf_blocks[b].att.W_key.weight = assign(gpt.trf_blocks[b].att.W_key.weight, k_w.T)
+        gpt.trf_blocks[b].att.W_value.weight = assign(gpt.trf_blocks[b].att.W_value.weight, v_w.T)
+
+        q_b, k_b, v_b = np.split(
+            (params["blocks"][b]["attn"]["c_attn"])["b"], 3, axis=-1
+        )
+        gpt.trf_blocks[b].att.W_query.bias = assign(gpt.trf_blocks[b].att.W_query.bias, q_b)
+        gpt.trf_blocks[b].att.W_key.bias = assign(gpt.trf_blocks[b].att.W_key.bias, k_b)
+        gpt.trf_blocks[b].att.W_value.bias = assign(gpt.trf_blocks[b].att.W_value.bias, v_b)
+
+        gpt.trf_blocks[b].att.out_proj.weight = assign(
+            gpt.trf_blocks[b].att.out_proj.weight,
+            params["blocks"][b]["attn"]["c_proj"]["w"].T
+        )
+        gpt.trf_blocks[b].att.out_proj.bias = assign(
+            gpt.trf_blocks[b].att.out_proj.bias,
+            params["blocks"][b]["attn"]["c_proj"]["b"]
+        )
+
+        gpt.trf_blocks[b].ff.layers[0].weight = assign(
+            gpt.trf_blocks[b].ff.layers[0].weight,
+            params["blocks"][b]["mlp"]["c_fc"]["w"].T
+        )
+        gpt.trf_blocks[b].ff.layers[0].bias = assign(
+            gpt.trf_blocks[b].ff.layers[0].bias,
+            params["blocks"][b]["mlp"]["c_fc"]["b"]
+        )
+
+        gpt.trf_blocks[b].ff.layers[2].weight = assign(
+            gpt.trf_blocks[b].ff.layers[2].weight,
+            params["blocks"][b]["mlp"]["c_proj"]["w"].T
+        )
+        gpt.trf_blocks[b].ff.layers[2].bias = assign(
+            gpt.trf_blocks[b].ff.layers[2].bias,
+            params["blocks"][b]["mlp"]["c_proj"]["b"]
+        )
+
+        gpt.trf_blocks[b].norm1.scale = assign(
+            gpt.trf_blocks[b].norm1.scale,
+            params["blocks"][b]["ln_1"]["g"]
+        )
+        gpt.trf_blocks[b].norm1.shift = assign(
+            gpt.trf_blocks[b].norm1.shift,
+            params["blocks"][b]["ln_1"]["b"]
+        )
+
+        gpt.trf_blocks[b].norm2.scale = assign(
+            gpt.trf_blocks[b].norm2.scale,
+            params["blocks"][b]["ln_2"]["g"]
+        )
+        gpt.trf_blocks[b].norm2.shift = assign(
+            gpt.trf_blocks[b].norm2.shift,
+            params["blocks"][b]["ln_2"]["b"]
+        )
+
+    gpt.final_norm.scale = assign(gpt.final_norm.scale, params["g"])
+    gpt.final_norm.shift = assign(gpt.final_norm.shift, params["b"])
+    gpt.out_head.weight = assign(gpt.out_head.weight, params["wte"])
 

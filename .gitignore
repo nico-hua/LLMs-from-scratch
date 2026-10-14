@@ -53,3 +53,5 @@ Thumbs.db
 wandb/
 runs/
 model/
+gpt2/
+sms_spam_collection/
