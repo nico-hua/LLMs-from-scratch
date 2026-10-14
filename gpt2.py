@@ -1,5 +1,40 @@
+import tiktoken
 import torch
 import torch.nn as nn
+from torch.utils.data import Dataset, DataLoader
+
+# 构建用于批处理输入和目标的数据集
+class GPTDatasetV1(Dataset):
+    def __init__(self, txt, tokenizer, max_length, stride):
+        self.input_ids = []
+        self.target_ids = []
+        # 对全部文本进行分词
+        token_ids = tokenizer.encode(txt)
+        # 使用滑动窗口将文本划分为长度为max_length的重叠序列
+        for i in range(0, len(token_ids) - max_length, stride):
+            input_chunk = token_ids[i: i+max_length]
+            target_chunk = token_ids[i+1: i+max_length+1]
+            self.input_ids.append(torch.tensor(input_chunk))
+            self.target_ids.append(torch.tensor(target_chunk))
+
+    def __len__(self):
+        return len(self.input_ids)
+
+    def __getitem__(self, idx):
+        return self.input_ids[idx], self.target_ids[idx]
+
+
+# 创建用于批量生成输入-目标对的数据加载器函数
+def create_dataloader_v1(txt, batch_size=4, max_length=256,
+                         stride=128, shuffle=True, drop_last=True,
+                         num_workers=0):
+    # 初始化分词器
+    tokenizer = tiktoken.get_encoding("gpt2")
+    # 创建数据集
+    dataset = GPTDatasetV1(txt, tokenizer, max_length, stride)
+    # 如果drop_last为True且批次大小小于指定的batch_size，则会删除最后一批，以防止在训练期间出现损失剧增
+    data_loader = DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, drop_last=drop_last, num_workers=num_workers)
+    return data_loader
 
 
 # 实现层归一化类
@@ -149,3 +184,20 @@ class GPTModel(nn.Module):
         x = self.final_norm(x)
         logits = self.out_head(x)
         return logits
+
+# GPT模型中用于生成文本的函数
+def generate_text_simple(model, idx, max_new_tokens, context_size):
+    for _ in range(max_new_tokens):
+        # 将当前文本截断至支持的长度
+        idx_cond = idx[:, -context_size:]
+        with torch.no_grad():
+            logits = model(idx_cond)
+        # 只关注最后一个输出的内容，形状由(batch, n_token, vocab_size)变为(batch, vocab_size)
+        logits = logits[:, -1, :]
+        probas = torch.softmax(logits, dim=-1)
+        # idx_next的形状为(batch, 1)
+        idx_next = torch.argmax(probas, dim=-1, keepdim=True)
+        # 将计算出的下一字符索引添加到索引数组，idx形状变为(batch, n_toekns+1)
+        idx = torch.cat((idx, idx_next), dim=1)
+    return idx
+
