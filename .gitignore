@@ -1,0 +1,54 @@
+
+# ========== Python ==========
+__pycache__/
+*.py[cod]
+*$py.class
+
+# ========== Jupyter Notebook ==========
+.ipynb_checkpoints/
+
+# ========== Virtual Environments ==========
+.venv/
+venv/
+env/
+ENV/
+
+# ========== Environment Variables ==========
+.env
+.env.*
+!.env.example
+
+# ========== Build & Packaging ==========
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# ========== Testing & Linting ==========
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+
+# ========== Jupyter Local State ==========
+.ipython/
+.jupyter/
+
+# ========== Logs & Temporary Files ==========
+*.log
+*.tmp
+*.swp
+.DS_Store
+Thumbs.db
+
+# ========== Machine Learning ==========
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+wandb/
+runs/
