@@ -52,6 +52,11 @@ Thumbs.db
 *.safetensors
 wandb/
 runs/
-model/
-gpt2/
-sms_spam_collection/
+
+
+
+/llm_pre_training/model/
+/llm_pre_training/gpt2/
+/llm_pre_training/sms_spam_collection/
+agent_post_training/sft-data
+agent_post_training/sft-output
