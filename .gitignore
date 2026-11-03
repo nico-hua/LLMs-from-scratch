@@ -58,5 +58,7 @@ runs/
 /llm_pre_training/model/
 /llm_pre_training/gpt2/
 /llm_pre_training/sms_spam_collection/
-agent_post_training/sft-data
-agent_post_training/sft-output
+agent_post_training/01-sft/sft-data
+agent_post_training/01-sft/sft-output
+agent_post_training/02-distillation/distillation-data
+agent_post_training/02-distillation/distillation-output
